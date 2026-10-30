@@ -276,6 +276,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--ice); outli
 .side h2::after { content: ""; flex: 1; height: 1px; background: var(--line); }
 .side p { margin: 0; color: var(--amber); line-height: 1.55; }
 .side .mission { color: var(--hi); }
+.side h2 small { order: 2; font: 500 10px var(--mono); letter-spacing: .04em; color: var(--amber-faint); }
+.side .mod { margin-top: 8px; font-size: 12px; color: var(--amber-dim); border-left: 2px solid var(--amber-faint); padding-left: 8px; }
+.side .mod:empty { display: none; }
+.side .mod b { color: var(--amber); font-weight: 600; }
 .tools { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .tools li { display: grid; gap: 0; }
 .tools code { color: var(--hi); font-family: var(--mono); }

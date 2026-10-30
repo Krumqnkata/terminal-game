@@ -1,18 +1,23 @@
 /* Игровият двигател: терминал, команди, нива, точки, бележник и постижения. */
 (() => {
   "use strict";
-  const { LEVELS, TOOL_INFO, BASE_TOOLS, MAN, ACHIEVEMENTS, hash, makeSfx } = window.Helios;
+  const { buildLevels, newSeed, TOOL_INFO, BASE_TOOLS, MAN, ACHIEVEMENTS, makeSfx } = window.Helios;
   const $ = (s) => document.querySelector(s);
   const outEl = $("#out"), input = $("#cmd"), promptEl = $("#prompt"), termEl = $("#term");
   const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   /* ---------- състояние ---------- */
-  const SAVE_KEY = "helios-save-v1", ACH_KEY = "helios-ach-v1";
-  const fresh = () => ({ level: 0, cwd: LEVELS[0].home.slice(), score: 0, hints: [0, 0, 0, 0, 0, 0], trace: 0, traceOuts: 0, ms: 0, levelMs: 0, fast: 0, phase: "play", ending: "", sound: true, hist: [], notes: [] });
+  // v2: всяка игра има семе (seed), от което се генерира светът. Старите записи без семе се пренебрегват.
+  const SAVE_KEY = "helios-save-v2", ACH_KEY = "helios-ach-v1";
+  let LEVELS = [];
+  const fresh = (seed = newSeed()) => {
+    LEVELS = buildLevels(seed);
+    return { seed, level: 0, cwd: LEVELS[0].home.slice(), score: 0, hints: [0, 0, 0, 0, 0, 0], trace: LEVELS[0].mod.start, traceOuts: 0, ms: 0, levelMs: 0, fast: 0, phase: "play", ending: "", sound: true, hist: [], notes: [] };
+  };
   let S = fresh();
   const L = () => LEVELS[Math.min(S.level, LEVELS.length - 1)];
   const save = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {} };
-  const load = () => { try { const v = JSON.parse(localStorage.getItem(SAVE_KEY)); return v && typeof v.level === "number" ? Object.assign(fresh(), v) : null; } catch (e) { return null; } };
+  const load = () => { try { const v = JSON.parse(localStorage.getItem(SAVE_KEY)); return v && typeof v.level === "number" && typeof v.seed === "number" ? Object.assign(fresh(v.seed), v) : null; } catch (e) { return null; } };
   const toolOpen = (name) => LEVELS.some((lv, i) => i <= S.level && lv.tool && lv.tool.includes(name));
 
   // Постиженията се пазят отделно от играта, за да оцелеят след `reset`.
@@ -124,6 +129,9 @@
     $("#trace").classList.toggle("danger", danger);
     document.body.classList.toggle("danger", danger);
     $("#mission").textContent = S.phase === "final" ? "ХЕЛИОС те вижда. Избери: `delete kontrolno` или `shutdown helios`." : S.phase === "done" ? "Мисията е изпълнена. `reset` започва нова игра." : L().mission;
+    const mod = L().mod;
+    $("#mod").innerHTML = S.phase === "play" ? `<b>${esc(mod.name)}</b> · ${esc(mod.desc)}` : "";
+    $("#world").textContent = "#" + S.seed;
     const latest = L().tool || [];
     $("#tools").innerHTML = BASE_TOOLS.map(([c, d]) => `<li><code>${esc(c)}</code><small>${esc(d)}</small></li>`).join("") +
       Object.keys(TOOL_INFO).filter(toolOpen).map((k) => `<li class="${latest.includes(k) && S.phase === "play" ? "new" : ""}"><code>${esc(TOOL_INFO[k][0])}</code><small>${esc(TOOL_INFO[k][1])}</small></li>`).join("");
@@ -188,7 +196,7 @@
   // quiet: командата не оставя следа; cost: колко % следа добавя (по подразбиране 3).
   const CMDS = {
     help: { quiet: true, fn: () => {
-      const rows = [["help", "този списък"], ["ls [-a] [папка]", "показва файловете; -a показва и скритите"], ["cd <папка>", "влиза в папка; `cd ..` е нагоре, `cd ~` е вкъщи"], ["cat <файл>", "показва съдържанието на файл"], ["pwd", "показва къде си"], ["tree [-a]", "дървото на папките (шумно, +5%)"], ["find <име>", "търси файл из целия сървър (много шумно, +8%)"], ["echo <текст>", "отпечатва текст, удобно с пайп"], ["unlock <парола>", "въвежда намерена парола"], ["note [текст]", "бележник: записва и показва находки"], ["man <команда>", "подробно ръководство за команда"], ["hint", "подсказка (−75 точки)"], ["status", "прогрес и точки"], ["achievements", "твоите постижения"], ["clear", "чисти екрана"], ["sound", "включва/изключва звука"], ["reset", "започва играта отначало"]];
+      const rows = [["help", "този списък"], ["ls [-a] [папка]", "показва файловете; -a показва и скритите"], ["cd <папка>", "влиза в папка; `cd ..` е нагоре, `cd ~` е вкъщи"], ["cat <файл>", "показва съдържанието на файл"], ["pwd", "показва къде си"], ["tree [-a]", "дървото на папките (шумно, +5%)"], ["find <име>", "търси файл из целия сървър (много шумно, +8%)"], ["echo <текст>", "отпечатва текст, удобно с пайп"], ["unlock <парола>", "въвежда намерена парола"], ["note [текст]", "бележник: записва и показва находки"], ["man <команда>", "подробно ръководство за команда"], ["hint", "подсказка (−75 точки)"], ["status", "прогрес и точки"], ["achievements", "твоите постижения"], ["clear", "чисти екрана"], ["sound", "включва/изключва звука"], ["reset [номер]", "нова игра в случаен свят (или в свят с този номер)"]];
       Object.keys(TOOL_INFO).filter(toolOpen).forEach((k) => rows.push(TOOL_INFO[k]));
       const w = Math.max(...rows.map((r) => r[0].length)) + 2;
       return [{ text: "КОМАНДИ", cls: "hi" }, ...rows.map(([a, b]) => ({ text: a.padEnd(w) + b })), { text: "Свързване на команди: `cat файл | grep дума` (виж `man pipe`). Tab допълва имена.", cls: "dim" }];
@@ -243,7 +251,8 @@
     whoami: { fn: () => R(`${L().user}  (официално)\nти          (всъщност)`) },
     clear: { quiet: true, fn: () => { outEl.innerHTML = ""; return []; } },
     status: { quiet: true, fn: () => [
-      { text: `Ниво ${Math.min(S.level + 1, 6)}/6 · ${L().host} (${L().ip})`, cls: "hi" },
+      { text: `Свят #${S.seed} · ниво ${Math.min(S.level + 1, 6)}/6 · ${L().host} (${L().ip})`, cls: "hi" },
+      { text: `Обстановка: ${L().mod.name}. ${L().mod.desc}` },
       { text: `Точки: ${S.score} · Време: ${fmtTime(S.ms)} · Подсказки: ${S.hints.reduce((a, b) => a + b, 0)} · Засичания: ${S.traceOuts} · Следа: ${S.trace}%` },
       { text: `Задача: ${L().mission}`, cls: "dim" },
     ] },
@@ -288,7 +297,7 @@
         })];
     } },
     sound: { quiet: true, fn: () => { S.sound = !S.sound; return R("Звук: " + (S.sound ? "включен" : "изключен"), "dim"); } },
-    reset: { quiet: true, fn: () => ({ reset: true }) },
+    reset: { quiet: true, fn: (args) => ({ reset: true, seed: parseInt(args[0], 10) }) },
     history: { quiet: true, fn: () => S.hist.slice(-20).map((h, i) => ({ text: String(i + 1).padStart(3) + "  " + h })) },
     caesar: { tool: true, fn: (args, stdin) => {
       const n = parseInt(args[0], 10);
@@ -425,9 +434,9 @@
       const c = getCmd(name.toLowerCase());
       if (!c) { result = R(`${name}: командата не е намерена. Пиши \`help\`.`, "err"); sfx.err(); break; }
       if (c.tool && !toolOpen(name.toLowerCase())) { result = R(`${name}: инструментът още не е изтеглен. Ще го получиш по-късно.`, "err"); break; }
-      if (!c.quiet && !counted) { counted = true; addTrace(c.cost ?? 3); }
+      if (!c.quiet && !counted) { counted = true; addTrace(Math.max(1, Math.round(((c.cost ?? 3) * L().mod.base) / 3))); }
       const r = c.fn(args, stdin);
-      if (r && r.reset) { resetGame(); return; }
+      if (r && r.reset) { resetGame(r.seed); return; }
       if (r && r.unlock !== undefined) { tryUnlock(r.unlock); result = []; break; }
       result = r || [];
       if (result.some((x) => x.cls === "err")) break;
@@ -438,8 +447,8 @@
   }
 
   function tryUnlock(guess) {
-    if (hash(guess) !== L().key) {
-      sfx.err(); addTrace(12);
+    if (guess !== L().key) {
+      sfx.err(); addTrace(L().mod.wrong);
       print("ДОСТЪП ОТКАЗАН. Грешна парола.", "err");
       later(() => { termEl.classList.remove("shake"); void termEl.offsetWidth; termEl.classList.add("shake"); updateUI(); save(); });
       return;
@@ -457,12 +466,12 @@
     print("ДОСТЪП РАЗРЕШЕН ✓", "ok big");
     print(`+500 за нивото${fast ? " · +100 бонус за скорост (под 2 минути)" : ""}`, "dim");
     if (done === LEVELS.length - 1) { startFinal(); return; }
-    S.level++; S.cwd = L().home.slice(); S.trace = 0; S.levelMs = 0;
+    S.level++; S.cwd = L().home.slice(); S.trace = L().mod.start; S.levelMs = 0;
     print("────────────────────────────────────────", "sep");
     progress(`Пробив към ${L().host}`);
     print(`Свързан с ${L().host} (${L().ip}) · ниво ${S.level + 1}/6`, "hi");
     later(() => { updateUI(); save(); });
-    phantom(L().phantom);
+    phantom(intro());
   }
 
   function startFinal() {
@@ -477,7 +486,7 @@
   function finalCmd(t) {
     const c = t.toLowerCase().replace(/\s+/g, " ");
     if (c === "clear") { later(() => { outEl.innerHTML = ""; }); return; }
-    if (c === "reset") { resetGame(); return; }
+    if (/^reset( \d+)?$/.test(c)) { resetGame(parseInt(c.slice(6), 10)); return; }
     if (c === "sound") { S.sound = !S.sound; updateUI(); save(); return; }
     if (c === "achievements" || c === "ach") { CMDS.achievements.fn().forEach((r) => print(r.text, r.cls)); return; }
     if (c === "delete kontrolno" || c === "rm kontrolno" || c === "rm -rf kontrolno") {
@@ -526,20 +535,23 @@
       const got = ACH.includes(a.id), name = got || !a.secret ? a.name : "???";
       return `<li class="${got ? "got" : ""}" title="${esc(got || !a.secret ? a.desc : "тайно постижение")}">${esc(name)}</li>`;
     }).join("");
-    $("#shareText").textContent = `ХЕЛИОС // проникнах в ядрото\nРанг: ${rank} · ${S.score} т.\nВреме ${fmtTime(S.ms)} · подсказки ${hints} · засичания ${S.traceOuts}\nПостижения ${ACH.length}/${ACHIEVEMENTS.length}\n[GUEST]─[PORTAL]─[MAIL]─[DB]─[LOGS]─[CORE] ✓`;
+    $("#shareText").textContent = `ХЕЛИОС // проникнах в ядрото\nРанг: ${rank} · ${S.score} т.\nВреме ${fmtTime(S.ms)} · подсказки ${hints} · засичания ${S.traceOuts}\nСвят #${S.seed} · постижения ${ACH.length}/${ACHIEVEMENTS.length}\n[GUEST]─[PORTAL]─[MAIL]─[DB]─[LOGS]─[CORE] ✓`;
     $("#ending").hidden = false;
     $("#copyBtn").focus();
   }
 
-  function resetGame() {
+  function resetGame(seed) {
     const snd = S.sound;
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
-    S = fresh(); S.sound = snd;
+    S = fresh(seed > 0 ? seed : undefined); S.sound = snd;
     $("#ending").hidden = true;
     document.body.classList.remove("final");
     later(() => { outEl.innerHTML = ""; });
     boot(false);
   }
+
+  // Въведението на ФАНТОМ плюс обстановката на нивото, когато не е спокойна.
+  const intro = () => L().phantom + (L().mod === window.Helios.MODS[0] ? "" : `\nВнимание, обстановка: ${L().mod.name}. ${L().mod.desc}`);
 
   /* ---------- стартиране ---------- */
   const BANNER = String.raw` _   _ _____ _     ___ ___  ____
@@ -563,6 +575,7 @@
     }
     print(BANNER, "art banner");
     print("ХЕЛИОС СИСТЕМС · вътрешна мрежа · само за упълномощени лица", "dim");
+    print(`Свят #${S.seed} · всяка игра е различна (виж \`man reset\`)`, "dim");
     print("────────────────────────────────────────", "sep");
     if (restored) {
       print(`Възстановена сесия: ниво ${Math.min(S.level + 1, 6)}/6, ${S.score} точки.`, "hi");
@@ -571,7 +584,7 @@
     } else {
       print("Връзката е установена. Никой не те вижда… засега.", "dim");
     }
-    phantom(L().phantom);
+    phantom(intro());
   }
 
   /* ---------- вход ---------- */
@@ -632,7 +645,7 @@
     const fallback = () => { const r = document.createRange(); r.selectNodeContents($("#shareText")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); btn.textContent = "Избрано, натисни Ctrl+C"; };
     try { navigator.clipboard.writeText(t).then(ok, fallback); } catch (e) { fallback(); }
   });
-  $("#againBtn").addEventListener("click", resetGame);
+  $("#againBtn").addEventListener("click", () => resetGame());
   $("#closeBtn").addEventListener("click", () => { $("#ending").hidden = true; input.focus(); });
 
   const restored = load();

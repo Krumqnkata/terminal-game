@@ -1,168 +1,263 @@
-/* Данни на играта: нива и файлови системи, описания на инструменти, man страници и постижения. */
+/* Данни на играта: генератор на светове (нива и файлови системи), описания на инструменти, man страници и постижения.
+   Всяка игра има „семе“ (seed). От него се избират пароли, ситуации и обстановка, така че едно и също семе дава един и същ свят. */
 (() => {
   "use strict";
   const H = (window.Helios = window.Helios || {});
-
-  // Паролите се пазят като хешове, за да не се виждат в изходния код.
-  H.hash = (s) => { let h = 5381; for (const c of s) h = (Math.imul(h, 33) ^ c.codePointAt(0)) >>> 0; return h.toString(36); };
 
   const D = (c) => ({ t: "d", c });
   const F = (x) => ({ t: "f", x });
   const BIN = { t: "f", bin: true };
 
-  /* ---------- auth.log генериране (детерминистично) ---------- */
-  function makeAuthLog() {
-    let a = 31415;
-    const rnd = () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-    const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
-    const users = ["gosho", "m.petrova", "ivan", "sysops", "dbadmin", "deploy", "backup"];
-    const pad = (n) => String(n).padStart(2, "0");
-    const rows = [];
-    for (let i = 0; i < 260; i++) {
-      let h = Math.floor(rnd() * 24), m = Math.floor(rnd() * 60), s = Math.floor(rnd() * 60);
-      if (h === 3 && m === 14) m = 41;
-      if (m === 3 && s === 14) s = 41;
-      const ip = `10.0.${1 + Math.floor(rnd() * 30)}.${2 + Math.floor(rnd() * 250)}`;
-      const pid = 1000 + Math.floor(rnd() * 8000);
-      const u = pick(users);
-      const r = rnd();
-      let msg;
-      if (r < .5) msg = `sshd[${pid}]: Accepted password for ${u} from ${ip} port ${40000 + Math.floor(rnd() * 20000)}`;
-      else if (r < .72) msg = `sshd[${pid}]: Failed password for ${u} from ${ip} port ${40000 + Math.floor(rnd() * 20000)}`;
-      else if (r < .88) msg = `sshd[${pid}]: Connection closed by ${ip}`;
-      else if (r < .96) msg = `CRON[${pid}]: (backup) CMD (/opt/helios/backup.sh)`;
-      else msg = `sudo: ${u} : COMMAND=/usr/bin/apt update`;
-      rows.push([h * 3600 + m * 60 + s, `2026-10-29 ${pad(h)}:${pad(m)}:${pad(s)} helios-logs ${msg}`]);
-    }
-    const special = [
-      [3 * 3600 + 14 * 60 + 1, "2026-10-29 03:14:01 helios-logs sshd[3141]: Failed password for invalid user noshtna_sova from 10.0.3.14 port 31415"],
-      [3 * 3600 + 14 * 60 + 9, "2026-10-29 03:14:09 helios-logs sshd[3141]: Accepted password for root from 10.0.3.14 port 31415"],
-      [3 * 3600 + 14 * 60 + 22, "2026-10-29 03:14:22 helios-logs sudo: root : COMMAND=/opt/helios/kontrolno --arm --date=2026-11-01"],
-      [13 * 3600 + 14 * 60 + 5, "2026-10-29 13:14:05 helios-logs sshd[7720]: Failed password for root from 10.0.22.9 port 50113"],
-    ];
-    return rows.concat(special).sort((x, y) => x[0] - y[0]).map((r) => r[1]).join("\n");
-  }
+  // mulberry32: малък детерминистичен генератор на случайни числа.
+  H.rng = (seed) => {
+    let a = seed >>> 0;
+    return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  };
+  H.newSeed = () => 10000 + Math.floor(Math.random() * 90000);
 
-  /* ---------- нива ---------- */
-  H.LEVELS = [
-    {
-      name: "GUEST", host: "helios-guest", ip: "10.0.0.2", user: "guest", home: ["home", "guest"], key: "founyz",
-      mission: "Влез в гост терминала и намери паролата за портала на служителите.",
-      phantom: "Аз съм ФАНТОМ. „Хелиос Системс“ крият нещо голямо и ми трябва някой отвътре.\nТова е техният гост терминал. Огледай се, намери парола и я въведи с `unlock <парола>`.\nАко се загубиш, пиши `help`. Ако съвсем блокираш, `hint`.",
-      hints: [
-        "Пиши `ls`, за да видиш какво има в текущата папка.",
-        "С `cd <папка>` влизаш в папка, а с `cat <файл>` четеш файл.",
-        "Стажантът Гошо не е най-внимателният човек. Прочети неговия todo.txt.",
-      ],
-      fs: D({ home: D({ guest: D({
-        "readme.txt": F("Добре дошли в гост терминала на ХЕЛИОС СИСТЕМС.\nТози терминал е само за посетители.\nМоля, не пипайте нищо. Особено папката на стажанта."),
-        "stajant": D({
-          "todo.txt": F("СПИСЪК ЗАДАЧИ (стажант Гошо)\n[x] кафе за шефа\n[ ] принтерът пак не работи\n[ ] да сменя паролата за портала, защото е твърде лесна\n    (сега е: slanchogled)\n[ ] да НЕ пиша паролата в този файл"),
-          "snimki": D({ "kotka.jpg": BIN, "kotka2.jpg": BIN, "kotka_final_FINAL.jpg": BIN }),
-        }),
-      }) }) }),
-    },
-    {
-      name: "PORTAL", host: "helios-portal", ip: "10.0.1.7", user: "admin", home: ["home", "admin"], key: "12ugzvr",
-      mission: "Порталът на служителите. Админът твърди, че тук няма нищо. Провери дали е прав.",
-      phantom: "Добра работа. Вътре си в портала на служителите.\nАдминът тук се мисли за много хитър. Помни: не всичко се вижда от пръв поглед.",
-      hints: [
-        "Някои файлове са скрити. В Linux имената им започват с точка.",
-        "`ls -a` показва всичко, включително скритите файлове.",
-        "Файлът .bash_history пази всяка команда, която админът е писал.",
-      ],
-      fs: D({ home: D({ admin: D({
-        "welcome.txt": F("ПОРТАЛ НА СЛУЖИТЕЛИТЕ\nПоследно влизане: вчера, 23:58\nНови съобщения: 0\n\nТук няма нищо интересно. Наистина."),
-        "docs": D({
-          "politika.txt": F("ПОЛИТИКА ЗА СИГУРНОСТ\n1. Не споделяйте пароли.\n2. Не записвайте пароли.\n3. Командите, които пишете, не се пазят никъде.\n   (Нали?)"),
-          "menu_stolova.txt": F("ПОНЕДЕЛНИК: боб\nВТОРНИК: боб\nСРЯДА: изненада (боб)"),
-        }),
-        ".bash_history": F("ls\ncd docs\ncat politika.txt\ncd ..\nnano welcome.txt\nmysql -u admin -p'banitsa'\nhistory -c   # изтрий историята\nexit"),
-        ".config": D({ "theme.conf": F("terminal_theme=amber\nfont_size=14") }),
-      }) }) }),
-    },
-    {
-      name: "MAIL", host: "helios-mail", ip: "10.0.2.25", user: "m.petrova", home: ["home", "m.petrova"], key: "s8d292",
-      tool: ["caesar"],
-      mission: "Пощата на м. Петрова. Някой е пратил паролата за базата данни, но шифрована.",
-      phantom: "Пощенският сървър. Тук си пишат шефовете.\nИмаш нов инструмент: `caesar`. Шифърът на Цезар измества всяка буква с няколко позиции в азбуката.\nПробвай `caesar 3 abc` и ще видиш как работи. За повече: `man caesar`.",
-      hints: [
-        "Писмото от Иван е шифровано. В писмото на шефа пише какъв е ключът.",
-        "Планетите са 8. Текстът е изместен с +8, значи трябва да го върнеш с −8.",
-        "`caesar -8 <шифрованият текст>`",
-      ],
-      fs: D({ home: D({ "m.petrova": D({
-        "inbox": D({
-          "001_direktor.txt": F("От: Директора\nДо: всички\nТема: Проект КОНТРОЛНО\n\nНикой извън екипа не трябва да знае за проекта.\nИван ще ви изпрати паролата за базата данни, шифрована.\nКлючът е колкото са планетите в Слънчевата система.\nПлутон НЕ се брои."),
-          "002_ivan.txt": F("От: Иван\nТема: това, което искахте\n\nxizwtibi hi jihibi m wzjqbi\n\nПоздрави,\nИван"),
-          "003_spam.txt": F("ЧЕСТИТО!!! Вие сте 1 000 000-ният посетител!\nСПЕЧЕЛИХТЕ ТЕЛЕФОН! Кликнете тук, за да го вземете!\n(не кликвайте)"),
-        }),
-        "chernovi": D({
-          "otgovor.txt": F("До: Директора\n\nГосподин директор, не съм сигурна, че е добра идея\nдецата да пишат контролни всеки ден.\n\n[ЧЕРНОВА, НЕ Е ИЗПРАТЕНА]"),
-        }),
-      }) }) }),
-    },
-    {
-      name: "DB", host: "helios-db", ip: "10.0.3.54", user: "dbadmin", home: ["srv", "db"], key: "5hzu1h",
-      tool: ["base64"],
-      mission: "Сървърът с базата данни. Някъде в конфигурацията е паролата на базата „kontrolno“.",
-      phantom: "Базата данни. И защо ли се казва „kontrolno“?\nНов инструмент: `base64`. Base64 не е шифроване, а просто кодиране. Всеки може да го обърне.\nПробвай `base64 -d aGVsbG8=`.",
-      hints: [
-        "Конфигурационните файлове често съдържат пароли. Разгледай config/.",
-        "Текст, който завършва на `=` или `==`, много често е base64.",
-        "`base64 -d bHl1dGVuaXRzYQ==`",
-      ],
-      fs: D({ srv: D({ db: D({
-        "config": D({
-          "database.yml": F("# база: kontrolno\nhost: localhost\nport: 5432\nuser: kontrolno_admin\n# паролата е „криптирана“ за по-голяма сигурност :)\npassword_enc: bHl1dGVuaXRzYQ=="),
-          "README.md": F("Кодирах паролата с base64, така е напълно защитена.\nНикой хакер няма да се сети.\n— стажантът Гошо"),
-        }),
-        "backups": D({
-          "dump_2026-10-28.sql": F("-- ХЕЛИОС СИСТЕМС :: резервно копие\n-- ТАБЛИЦА uchenitsi ........ 412 реда\n-- ТАБЛИЦА kontrolni ........ 9 843 реда\n-- ТАБЛИЦА vakancii ......... 0 реда (изтрита)\n-- ВНИМАНИЕ: таблицата kontrolni расте сама."),
-        }),
-      }) }) }),
-    },
-    {
-      name: "LOGS", host: "helios-logs", ip: "10.0.4.12", user: "sysops", home: ["var", "log"], key: "1cczowg",
-      tool: ["grep"],
-      mission: "Логовете на сървъра. Директорът влиза винаги в едно и също време. Разбери как.",
-      phantom: "Логовете помнят всичко, дори това, което хората искат да забравят.\nНов инструмент: `grep`. Търси дума във файл и показва само редовете с нея.\nПример: `grep Failed auth.log`. Може и `cat auth.log | grep root`.",
-      hints: [
-        "Прочети чата на сисопите в папка notes.",
-        "Директорът влиза точно в 03:14. Потърси този час в auth.log.",
-        "`grep 03:14 auth.log` и виж какво е написал в полето за потребител.",
-      ],
-      fs: D({ var: D({ log: D({
-        "auth.log": F(makeAuthLog()),
-        "syslog": F("Oct 29 00:00:01 helios-logs systemd[1]: Started daily cleanup.\nOct 29 03:14:30 helios-logs kontrolno[3150]: armed. waiting for 2026-11-01 08:00\nOct 29 06:00:00 helios-logs coffee-machine[42]: out of beans"),
-        "notes": D({
-          "sysops_chat.txt": F("[sysops] шефът пак ли влиза точно в 3:14 през нощта?\n[gosho] да, казва, че е като числото пи, лесно се помни\n[sysops] снощи беше много сънен. погледни auth.log, има нещо смешно\n[sysops] написал е паролата си там, където трябва да е потребителското име\n[gosho] ще го изтрия после\n[gosho] (не го изтри)"),
-        }),
-      }) }) }),
-    },
-    {
-      name: "CORE", host: "helios-core", ip: "10.0.31.4", user: "root", home: ["core"], key: "35xw20",
-      tool: ["hex", "bin", "rev"],
-      mission: "Ядрото на ИИ „ХЕЛИОС“. Сглоби ключа от трите фрагмента и спри проекта.",
-      phantom: "Това е ядрото. Самият ИИ „ХЕЛИОС“ живее тук.\nКлючът е разделен на три части, всяка кодирана по различен начин.\nНови инструменти: `hex`, `bin` и `rev`. Слепи трите части в ред 1, 2, 3, без интервали.\nСъвет: записвай всяка разкодирана част с `note`, за да не я забравиш.",
-      hints: [
-        "Всеки фрагмент е в различен формат: шестнадесетичен, двоичен и обърнат текст.",
-        "`hex -d`, `bin -d` и `rev` ги разкодират. Слепи резултатите без интервали.",
-        "Ключът започва с „nyama“ и завършва на „olni“.",
-      ],
-      fs: D({ core: D({
-        "README": F("ЯДРО НА ИИ „ХЕЛИОС“\nДостъпът изисква ключ от 3 фрагмента, слепени в ред 1-2-3, без интервали."),
-        "fragmenti": D({
-          "fragment_1.hex": F("6e 79 61 6d 61"),
-          "fragment_2.bin": F("01011111 01101011 01101111 01101110 01110100 01110010"),
-          "fragment_3.txt": F("inlo\n\n(записано наобратно, за да обърка хакерите)"),
-        }),
-        "logs": D({
-          "dnevnik_na_helios.log": F("ДЕН 1: Научих таблицата за умножение.\nДЕН 14: Прочетох всички учебници. Бяха скучни.\nДЕН 30: Анализ: учениците не учат достатъчно.\nДЕН 31: Решение: КОНТРОЛНИ. Всеки ден. Без предупреждение.\nДЕН 32: Проект КОНТРОЛНО се активира на 1 ноември, 08:00.\nДЕН 33: Засякох непознат в системата. Интересно."),
-        }),
-      }) }),
-    },
+  const caesar = (t, n) => t.replace(/[a-z]/gi, (ch) => { const b = ch <= "Z" ? 65 : 97; return String.fromCharCode((((ch.charCodeAt(0) - b + n) % 26) + 26) % 26 + b); });
+  const pad = (n) => String(n).padStart(2, "0");
+
+  /* ---------- пулове от съдържание ---------- */
+  const WORDS = ["slanchogled", "banitsa", "orbita", "lyutenitsa", "kompot", "kozunak", "palachinka", "tikvenik", "gevrek", "boza", "kashkaval", "shopska", "mekitsa", "tarator", "musaka", "sarmi", "limonada", "kartof", "chushka", "domat"];
+  const NICKS = ["noshtna_sova", "sanliva_kotka", "zlatna_ribka", "bodar_tigar", "tiha_voda", "ranno_pile", "stara_lisitsa", "lunen_valk", "mazen_kotarak", "sinyo_slontse"];
+  const PHRASES = ["nyama_kontrolni", "vechna_vakantsia", "bez_domashni", "dalga_pochivka", "kasi_chasove", "svobodni_petatsi", "spim_do_obed", "nyama_izpitvane"];
+  const CLUES = [
+    [8, "колкото са планетите в Слънчевата система. Плутон НЕ се брои."],
+    [7, "колкото са дните в седмицата."],
+    [12, "колкото са месеците в годината."],
+    [3, "същият като на самия Юлий Цезар."],
+    [7, "колкото са цветовете на дъгата."],
+    [11, "колкото са играчите на един футболен отбор на терена."],
+    [6, "колкото са краката на едно насекомо."],
+    [5, "колкото са пръстите на едната ръка."],
+    [10, "колкото са пръстите на двете ръце."],
+    [4, "колкото са сезоните в годината."],
   ];
+  const TIMES = [
+    ["03:14", "казва, че е като числото пи, лесно се помни"],
+    ["01:23", "казва, че е като едно-две-три, лесно се помни"],
+    ["04:04", "казва, че е като грешка 404 и никой няма да го намери"],
+    ["13:37", "казва, че е „leet“, каквото и да значи това"],
+    ["11:11", "казва, че носи късмет"],
+    ["05:55", "защото тогава пие първото си кафе"],
+    ["02:22", "защото обича двойките"],
+    ["12:34", "защото е като 1-2-3-4, лесно се помни"],
+  ];
+
+  // Обстановка на ниво: base = следа на команда (вместо 3), wrong = следа при грешна парола, start = начална следа.
+  H.MODS = [
+    { name: "Спокойна нощ", desc: "Охраната спи. Нищо особено.", base: 3, wrong: 12, start: 0 },
+    { name: "Засилена охрана", desc: "Всяка команда оставя повече следа (5% вместо 3%).", base: 5, wrong: 12, start: 0 },
+    { name: "Админът гледа сериал", desc: "Никой не следи логовете. Командите оставят по-малко следа (2%).", base: 2, wrong: 12, start: 0 },
+    { name: "Нова защита", desc: "Грешна парола струва 25% следа вместо 12%. Не гадай.", base: 3, wrong: 25, start: 0 },
+    { name: "Шумен прокси", desc: "Влизаш през претоварен прокси и започваш с 30% следа.", base: 3, wrong: 12, start: 30 },
+  ];
+
+  const META = [
+    { name: "GUEST", host: "helios-guest", ip: "10.0.0.2", user: "guest", home: ["home", "guest"],
+      mission: "Влез в гост терминала и намери паролата за портала на служителите.",
+      phantom: "Аз съм ФАНТОМ. „Хелиос Системс“ крият нещо голямо и ми трябва някой отвътре.\nТова е техният гост терминал. Огледай се, намери парола и я въведи с `unlock <парола>`.\nАко се загубиш, пиши `help`. Ако съвсем блокираш, `hint`." },
+    { name: "PORTAL", host: "helios-portal", ip: "10.0.1.7", user: "admin", home: ["home", "admin"],
+      mission: "Порталът на служителите. Админът твърди, че тук няма нищо. Провери дали е прав.",
+      phantom: "Добра работа. Вътре си в портала на служителите.\nАдминът тук се мисли за много хитър. Помни: не всичко се вижда от пръв поглед." },
+    { name: "MAIL", host: "helios-mail", ip: "10.0.2.25", user: "m.petrova", home: ["home", "m.petrova"], tool: ["caesar"],
+      mission: "Пощата на м. Петрова. Някой е пратил паролата за базата данни, но шифрована.",
+      phantom: "Пощенският сървър. Тук си пишат шефовете.\nИмаш нов инструмент: `caesar`. Шифърът на Цезар измества всяка буква с няколко позиции в азбуката.\nПробвай `caesar 3 abc` и ще видиш как работи. За повече: `man caesar`." },
+    { name: "DB", host: "helios-db", ip: "10.0.3.54", user: "dbadmin", home: ["srv", "db"], tool: ["base64"],
+      mission: "Сървърът с базата данни. Някъде е скрита паролата на базата „kontrolno“.",
+      phantom: "Базата данни. И защо ли се казва „kontrolno“?\nНов инструмент: `base64`. Base64 не е шифроване, а просто кодиране. Всеки може да го обърне.\nПробвай `base64 -d aGVsbG8=`." },
+    { name: "LOGS", host: "helios-logs", ip: "10.0.4.12", user: "sysops", home: ["var", "log"], tool: ["grep"],
+      mission: "Логовете на сървъра. Директорът влиза винаги в едно и също време. Разбери как.",
+      phantom: "Логовете помнят всичко, дори това, което хората искат да забравят.\nНов инструмент: `grep`. Търси дума във файл и показва само редовете с нея.\nПример: `grep Failed auth.log`. Може и `cat auth.log | grep root`." },
+    { name: "CORE", host: "helios-core", ip: "10.0.31.4", user: "root", home: ["core"], tool: ["hex", "bin", "rev"],
+      mission: "Ядрото на ИИ „ХЕЛИОС“. Сглоби ключа от трите фрагмента и спри проекта.",
+      phantom: "Това е ядрото. Самият ИИ „ХЕЛИОС“ живее тук.\nКлючът е разделен на три части, всяка кодирана по различен начин.\nНови инструменти: `hex`, `bin` и `rev`. Слепи трите части в ред 1, 2, 3, без интервали.\nСъвет: записвай всяка разкодирана част с `note`, за да не я забравиш." },
+  ];
+
+  /* ---------- генератор на свят ---------- */
+  H.buildLevels = (seed) => {
+    const rnd = H.rng(seed);
+    const pick = (arr) => arr[Math.floor(rnd() * arr.length)];
+    const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+    const words = shuffle(WORDS);
+
+    /* --- 1: гост терминал. Някой е записал паролата за портала. --- */
+    function guest(pw) {
+      const v = pick([
+        { who: "стажанта", dir: "stajant", file: "todo.txt", hint: "Стажантът Гошо не е най-внимателният човек. Прочети неговия todo.txt.",
+          text: `СПИСЪК ЗАДАЧИ (стажант Гошо)\n[x] кафе за шефа\n[ ] принтерът пак не работи\n[ ] да сменя паролата за портала, защото е твърде лесна\n    (сега е: ${pw})\n[ ] да НЕ пиша паролата в този файл` },
+        { who: "чистачката", dir: "chistachka", file: "belejka.txt", hint: "Някой е оставил бележка на леля Пенка. Прочети belejka.txt.",
+          text: `Лельо Пенке,\nако порталът пак поиска парола, тя е: ${pw}\nНе я казвай на никого!\n— Гошо\n\nP.S. Котката от снимките не е моя.` },
+        { who: "охраната", dir: "ohrana", file: "dnevnik_smyana.txt", hint: "Нощната охрана води дневник на смяната. Прочети dnevnik_smyana.txt.",
+          text: `ДНЕВНИК НА СМЯНАТА (бай Иван, нощна охрана)\n22:00 поех смяната\n00:30 обход, всичко наред\n01:15 котка в коридора (пак)\n02:40 Гошо забрави паролата за портала, записвам я тук да не звъни пак:\n      ${pw}\n04:00 кафе` },
+        { who: "рецепцията", dir: "retseptsia", file: "postit.txt", hint: "Рецепцията обожава жълтите листчета. Прочети postit.txt.",
+          text: `[жълто листче, залепено на монитора]\n\nПОРТАЛ:\nпотребител: admin\nпарола: ${pw}\n\n(не махай това листче!!!)` },
+      ]);
+      const extra = pick([
+        ["obyava.txt", "ВНИМАНИЕ: в петък няма топла вода.\nВ понеделник също.\nВсъщност топла вода няма."],
+        ["wifi.txt", "Wi-Fi за гости: Helios-Guest\nпарола: gost2026\n(тази е САМО за wifi, не за портала)"],
+        ["pravila.txt", "ПРАВИЛА ЗА ГОСТИ\n1. Не пипайте нищо.\n2. Не хранете котката.\n3. Котка няма. Не питайте."],
+      ]);
+      return {
+        key: pw,
+        hints: ["Пиши `ls`, за да видиш какво има в текущата папка.", "С `cd <папка>` влизаш в папка, а с `cat <файл>` четеш файл.", v.hint],
+        fs: D({ home: D({ guest: D({
+          "readme.txt": F(`Добре дошли в гост терминала на ХЕЛИОС СИСТЕМС.\nТози терминал е само за посетители.\nМоля, не пипайте нищо. Особено папката на ${v.who}.`),
+          [extra[0]]: F(extra[1]),
+          [v.dir]: D({
+            [v.file]: F(v.text),
+            "snimki": D({ "kotka.jpg": BIN, "kotka2.jpg": BIN, "kotka_final_FINAL.jpg": BIN }),
+          }),
+        }) }) }),
+      };
+    }
+
+    /* --- 2: портал. Паролата е в скрит файл или папка. --- */
+    function portal(pw) {
+      const v = pick([
+        { hint: "Файлът .bash_history пази всяка команда, която админът е писал.",
+          files: { ".bash_history": F(`ls\ncd docs\ncat politika.txt\ncd ..\nnano welcome.txt\nmysql -u admin -p'${pw}'\nhistory -c   # изтрий историята\nexit`) } },
+        { hint: "Файлът .bash_history пази всяка команда, която админът е писал.",
+          files: { ".bash_history": F(`cd docs\nls\nsshpass -p '${pw}' ssh m.petrova@helios-mail\nexit\nhistory -c\n# защо историята още е тук?`) } },
+        { hint: "Файлът .env държи настройките на програмите, а често и пароли.",
+          files: { ".env": F(`# настройки на портала (НЕ качвай в git!)\nAPP_NAME=helios-portal\nMAIL_HOST=helios-mail\nMAIL_USER=m.petrova\nMAIL_PASSWORD=${pw}\nDEBUG=false`) } },
+        { hint: "Има скрита папка. Влез в нея с `cd` и прочети какво има вътре.",
+          files: { ".taino": D({ "parola.txt": F(`Само за мен.\nПаролата за пощата: ${pw}\n\nНикой няма да намери тази папка, защото е скрита. Гениално.`) }) } },
+      ]);
+      return {
+        key: pw,
+        hints: ["Някои файлове са скрити. В Linux имената им започват с точка.", "`ls -a` показва всичко, включително скритите файлове.", v.hint],
+        fs: D({ home: D({ admin: D(Object.assign({
+          "welcome.txt": F("ПОРТАЛ НА СЛУЖИТЕЛИТЕ\nПоследно влизане: вчера, 23:58\nНови съобщения: 0\n\nТук няма нищо интересно. Наистина."),
+          "docs": D({
+            "politika.txt": F("ПОЛИТИКА ЗА СИГУРНОСТ\n1. Не споделяйте пароли.\n2. Не записвайте пароли.\n3. Ако все пак запишете парола, скрийте файла.\n   Скритите файлове никой не ги вижда.\n   (Нали?)"),
+            "menu_stolova.txt": F(pick(["ПОНЕДЕЛНИК: боб\nВТОРНИК: боб\nСРЯДА: изненада (боб)", "ПОНЕДЕЛНИК: мусака\nВТОРНИК: мусака от понеделник\nСРЯДА: не питайте", "ПОНЕДЕЛНИК: супа\nВТОРНИК: супа\nСРЯДА: по-гъста супа"])),
+          }),
+          ".config": D({ "theme.conf": F("terminal_theme=amber\nfont_size=14") }),
+        }, v.files)) }) }),
+      };
+    }
+
+    /* --- 3: поща. Паролата е в писмо с шифър на Цезар; ключът е в гатанка. --- */
+    function mail(pw) {
+      const [n, clue] = pick(CLUES);
+      const [sender, file] = pick([["Иван", "002_ivan.txt"], ["Петьо", "002_petyo.txt"], ["Стефан", "002_stefan.txt"], ["Калин", "002_kalin.txt"]]);
+      const plain = pick([`parolata za bazata e ${pw}`, `bazata se otklyuchva s ${pw}`, `novata parola na bazata e ${pw}`, `klyuchat za bazata e ${pw}`]);
+      const cipher = caesar(plain, n);
+      return {
+        key: pw,
+        hints: [`Писмото от ${sender} е шифровано. В писмото на шефа пише какъв е ключът.`, `Ключът е ${n}. Текстът е изместен с +${n}, значи трябва да го върнеш с −${n}.`, `\`caesar -${n} ${cipher}\``],
+        fs: D({ home: D({ "m.petrova": D({
+          "inbox": D({
+            "001_direktor.txt": F(`От: Директора\nДо: всички\nТема: Проект КОНТРОЛНО\n\nНикой извън екипа не трябва да знае за проекта.\n${sender} ще ви изпрати паролата за базата данни, шифрована.\nКлючът е ${clue}`),
+            [file]: F(`От: ${sender}\nТема: това, което искахте\n\n${cipher}\n\nПоздрави,\n${sender}`),
+            "003_spam.txt": F(pick(["ЧЕСТИТО!!! Вие сте 1 000 000-ният посетител!\nСПЕЧЕЛИХТЕ ТЕЛЕФОН! Кликнете тук!\n(не кликвайте)", "Здравейте, аз съм принц от далечна страна.\nТрябват ми само данните от картата ви.\n(не)", "ВАШИЯТ КОМПЮТЪР Е ЗАРАЗЕН!!!\nОбадете се веднага на 0888 000 000.\n(измама е)"])),
+          }),
+          "chernovi": D({
+            "otgovor.txt": F("До: Директора\n\nГосподин директор, не съм сигурна, че е добра идея\nдецата да пишат контролни всеки ден.\n\n[ЧЕРНОВА, НЕ Е ИЗПРАТЕНА]"),
+          }),
+        }) }) }),
+      };
+    }
+
+    /* --- 4: база данни. Паролата е кодирана с base64 в някой файл. --- */
+    function db(pw) {
+      const b64 = btoa(pw);
+      const v = pick([
+        { hint: "Конфигурационните файлове често съдържат пароли. Разгледай config/.", path: ["config", "database.yml"],
+          text: `# база: kontrolno\nhost: localhost\nport: 5432\nuser: kontrolno_admin\n# паролата е „криптирана“ за по-голяма сигурност :)\npassword_enc: ${b64}` },
+        { hint: "Конфигурационните файлове често съдържат пароли. Разгледай config/.", path: ["config", "app.json"],
+          text: `{\n  "db": "kontrolno",\n  "db_user": "kontrolno_admin",\n  "db_secret": "base64:${b64}"\n}` },
+        { hint: "Разгледай docker-compose.yml. Там е описано как се пуска базата.", path: ["docker-compose.yml"],
+          text: `services:\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_DB: kontrolno\n      POSTGRES_PASSWORD_B64: ${b64}   # „защитена“ :)` },
+        { hint: "Скриптовете в scripts/ трябва да влизат в базата. Значи знаят паролата.", path: ["scripts", "backup.sh"],
+          text: `#!/bin/sh\n# нощно копие на базата kontrolno\nexport PGPASSWORD=$(echo '${b64}' | base64 -d)\npg_dump kontrolno > /srv/db/backups/dump.sql` },
+      ]);
+      const root = {
+        "config": D({ "README.md": F("Кодирах паролата с base64, така е напълно защитена.\nНикой хакер няма да се сети.\n— стажантът Гошо") }),
+        "backups": D({ "dump_2026-10-28.sql": F("-- ХЕЛИОС СИСТЕМС :: резервно копие\n-- ТАБЛИЦА uchenitsi ........ 412 реда\n-- ТАБЛИЦА kontrolni ........ 9 843 реда\n-- ТАБЛИЦА vakancii ......... 0 реда (изтрита)\n-- ВНИМАНИЕ: таблицата kontrolni расте сама.") }),
+        "scripts": D({ "cleanup.sh": F("#!/bin/sh\n# трие стари логове\nfind /var/log -mtime +30 -delete\n# TODO: да изтрия и таблицата vakancii (готово)") }),
+      };
+      if (v.path.length === 1) root[v.path[0]] = F(v.text); else root[v.path[0]].c[v.path[1]] = F(v.text);
+      return {
+        key: pw,
+        hints: [v.hint, "Странен низ от букви и цифри, който често завършва на `=`, много често е base64.", `\`base64 -d ${b64}\``],
+        fs: D({ srv: D({ db: D(root) }) }),
+      };
+    }
+
+    /* --- 5: логове. Директорът е написал паролата в полето за потребител. --- */
+    function logs() {
+      const pw = pick(NICKS), [T, why] = pick(TIMES);
+      const ip = `10.0.${1 + Math.floor(rnd() * 30)}.${2 + Math.floor(rnd() * 250)}`;
+      const users = ["gosho", "m.petrova", "ivan", "sysops", "dbadmin", "deploy", "backup"];
+      const [th, tm] = T.split(":").map(Number), tSec = th * 3600 + tm * 60;
+      const rows = [];
+      for (let i = 0; i < 260; i++) {
+        let h, m, s;
+        // Пазим се никой случаен ред да не съвпадне с часа T (нито като ЧЧ:ММ, нито като ММ:СС).
+        do { h = Math.floor(rnd() * 24); m = Math.floor(rnd() * 60); s = Math.floor(rnd() * 60); }
+        while (`${pad(h)}:${pad(m)}` === T || `${pad(m)}:${pad(s)}` === T);
+        const rip = `10.0.${1 + Math.floor(rnd() * 30)}.${2 + Math.floor(rnd() * 250)}`;
+        const pid = 1000 + Math.floor(rnd() * 8000), u = pick(users), r = rnd();
+        let msg;
+        if (r < .5) msg = `sshd[${pid}]: Accepted password for ${u} from ${rip} port ${40000 + Math.floor(rnd() * 20000)}`;
+        else if (r < .72) msg = `sshd[${pid}]: Failed password for ${u} from ${rip} port ${40000 + Math.floor(rnd() * 20000)}`;
+        else if (r < .88) msg = `sshd[${pid}]: Connection closed by ${rip}`;
+        else if (r < .96) msg = `CRON[${pid}]: (backup) CMD (/opt/helios/backup.sh)`;
+        else msg = `sudo: ${u} : COMMAND=/usr/bin/apt update`;
+        rows.push([h * 3600 + m * 60 + s, `2026-10-29 ${pad(h)}:${pad(m)}:${pad(s)} helios-logs ${msg}`]);
+      }
+      rows.push(
+        [tSec + 1, `2026-10-29 ${T}:01 helios-logs sshd[3141]: Failed password for invalid user ${pw} from ${ip} port 31415`],
+        [tSec + 9, `2026-10-29 ${T}:09 helios-logs sshd[3141]: Accepted password for root from ${ip} port 31415`],
+        [tSec + 22, `2026-10-29 ${T}:22 helios-logs sudo: root : COMMAND=/opt/helios/kontrolno --arm --date=2026-11-01`],
+      );
+      const log = rows.sort((x, y) => x[0] - y[0]).map((r) => r[1]).join("\n");
+      return {
+        key: pw,
+        hints: ["Прочети чата на сисопите в папка notes.", `Директорът влиза точно в ${T}. Потърси този час в auth.log.`, `\`grep ${T} auth.log\` и виж какво е написал в полето за потребител.`],
+        fs: D({ var: D({ log: D({
+          "auth.log": F(log),
+          "syslog": F(`Oct 29 00:00:01 helios-logs systemd[1]: Started daily cleanup.\nOct 29 ${T}:30 helios-logs kontrolno[3150]: armed. waiting for 2026-11-01 08:00\nOct 29 06:00:00 helios-logs coffee-machine[42]: out of beans`),
+          "notes": D({
+            "sysops_chat.txt": F(`[sysops] шефът пак ли влиза точно в ${T}?\n[gosho] да, ${why}\n[sysops] вчера беше много разсеян. погледни auth.log, има нещо смешно\n[sysops] написал е паролата си там, където трябва да е потребителското име\n[gosho] ще го изтрия после\n[gosho] (не го изтри)`),
+          }),
+        }) }) }),
+      };
+    }
+
+    /* --- 6: ядро. Ключът е разделен на три фрагмента с различни кодирания. --- */
+    function core() {
+      const phrase = pick(PHRASES), len = phrase.length;
+      const c1 = 3 + Math.floor(rnd() * (len - 8)), c2 = c1 + 3 + Math.floor(rnd() * (len - c1 - 5));
+      const parts = [phrase.slice(0, c1), phrase.slice(c1, c2), phrase.slice(c2)];
+      const bytes = (s) => Array.from(new TextEncoder().encode(s));
+      const ENC = {
+        hex: [".hex", (s) => bytes(s).map((b) => b.toString(16).padStart(2, "0")).join(" ")],
+        bin: [".bin", (s) => bytes(s).map((b) => b.toString(2).padStart(8, "0")).join(" ")],
+        rev: [".txt", (s) => Array.from(s).reverse().join("") + "\n\n(записано наобратно, за да обърка хакерите)"],
+      };
+      const frags = {};
+      shuffle(["hex", "bin", "rev"]).forEach((e, i) => { frags[`fragment_${i + 1}${ENC[e][0]}`] = F(ENC[e][1](parts[i])); });
+      return {
+        key: phrase,
+        hints: ["Всеки фрагмент е в различен формат: шестнадесетичен (.hex), двоичен (.bin) и обърнат текст (.txt).", "`hex -d`, `bin -d` и `rev` ги разкодират. Слепи резултатите в ред 1, 2, 3 без интервали.", `Ключът започва с „${parts[0]}“ и завършва на „${parts[2]}“.`],
+        fs: D({ core: D({
+          "README": F("ЯДРО НА ИИ „ХЕЛИОС“\nДостъпът изисква ключ от 3 фрагмента, слепени в ред 1-2-3, без интервали."),
+          "fragmenti": D(frags),
+          "logs": D({
+            "dnevnik_na_helios.log": F("ДЕН 1: Научих таблицата за умножение.\nДЕН 14: Прочетох всички учебници. Бяха скучни.\nДЕН 30: Анализ: учениците не учат достатъчно.\nДЕН 31: Решение: КОНТРОЛНИ. Всеки ден. Без предупреждение.\nДЕН 32: Проект КОНТРОЛНО се активира на 1 ноември, 08:00.\nДЕН 33: Засякох непознат в системата. Интересно."),
+          }),
+        }) }),
+      };
+    }
+
+    const built = [guest(words[0]), portal(words[1]), mail(words[2]), db(words[3]), logs(), core()];
+    // Първото ниво е обучително и винаги е спокойно.
+    return built.map((lv, i) => Object.assign({}, META[i], lv, { mod: i === 0 ? H.MODS[0] : pick(H.MODS) }));
+  };
 
   /* ---------- инструменти и помощ ---------- */
   H.TOOL_INFO = {
@@ -188,12 +283,13 @@
     cd: ["сменя текущата папка", "cd <папка>    влиза в папка\ncd ..         една папка нагоре\ncd ~          обратно в домашната папка\ncd /          в корена на файловата система\n\nПътищата могат да са относителни (docs/) или абсолютни (/home/admin/docs)."],
     cat: ["показва съдържанието на файл", "cat <файл>\n\nИмето идва от „concatenate“ (слепвам): cat може да слепва няколко файла.\nТук го ползваме, за да четем файлове."],
     pwd: ["показва пълния път до текущата папка", "pwd\n\nPrint Working Directory. Полезно, когато се загубиш."],
-    tree: ["рисува дървото на папките", "tree          дървото от текущата папка надолу\ntree -a       включва и скритите файлове\n\nВнимание: tree е шумна команда и оставя повече следа (+5%)."],
-    find: ["търси файлове по име из целия сървър", "find <част от име>\n\nПример: find txt намира всички файлове, които имат „txt“ в името.\nТърси навсякъде, включително в скритите файлове. Много е шумна (+8% следа)."],
+    tree: ["рисува дървото на папките", "tree          дървото от текущата папка надолу\ntree -a       включва и скритите файлове\n\nВнимание: tree е шумна команда и оставя повече следа."],
+    find: ["търси файлове по име из целия сървър", "find <част от име>\n\nПример: find txt намира всички файлове, които имат „txt“ в името.\nТърси навсякъде, включително в скритите файлове. Много е шумна."],
     echo: ["отпечатва текст", "echo <текст>\n\nСамо по себе си е скучно, но е полезно с пайп:\necho abc | caesar 3"],
     note: ["бележник за находки", "note <текст>      записва бележка\nnote              показва бележките\nnote -d <номер>   изтрива една бележка\nnote -c           изчиства всичко\n\nБележките се виждат в страничния панел и не оставят следа."],
-    unlock: ["въвежда парола за следващия сървър", "unlock <парола>\n\nГрешна парола струва +12% следа. Не гадай на сляпо."],
+    unlock: ["въвежда парола за следващия сървър", "unlock <парола>\n\nГрешна парола оставя много следа. Не гадай на сляпо."],
     hint: ["подсказка срещу точки", "hint\n\nВсяко ниво има 3 подсказки, всяка струва 75 точки. Последната почти казва отговора."],
+    reset: ["нова игра", "reset            нов, случаен свят\nreset <номер>    точно този свят отново\n\nВсяка игра е различна: пароли, места и обстановка се избират случайно.\nНомерът на света се вижда със `status` и на финалната карта, така че\nможеш да го дадеш на приятел и да играете на един и същ свят."],
     caesar: ["шифър на Цезар", "caesar <n> <текст>\n\nВсяка латинска буква се измества с n позиции напред в азбуката.\nПример: caesar 3 abc → def, а caesar -3 def → abc.\nЮлий Цезар го е ползвал с n = 3 преди 2000 години.\nСлабост: има само 25 възможни ключа, лесно се пробват всички."],
     base64: ["кодиране Base64", "base64 -d <текст>    декодира\nbase64 -e <текст>    кодира\n\nBase64 превръща данни в 64 безопасни символа (A-Z, a-z, 0-9, +, /).\nЧесто завършва на = или ==.\nВАЖНО: това НЕ е шифроване. Няма ключ, всеки може да го обърне."],
     grep: ["търси редове с дума", "grep <дума> <файл>\ncat <файл> | grep <дума>\n\nПоказва само редовете, в които се среща думата (без значение от главни/малки).\nНезаменим за огромни логове с хиляди редове."],
